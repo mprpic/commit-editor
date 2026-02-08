@@ -55,6 +55,9 @@ commit-editor path/to/file.txt
 | `Ctrl+Q` | Quit                         |
 | `Ctrl+O` | Toggle Signed-off-by trailer |
 
+Additional key bindings are noted in the Textual
+[`TextArea` documentation](https://textual.textualize.io/widgets/text_area/#bindings).
+
 ## Commit Message Format
 
 This editor enforces the widely-accepted git commit message conventions:
@@ -69,6 +72,7 @@ This editor enforces the widely-accepted git commit message conventions:
 - Word-level spellchecking
 - Config file support (`.commit.toml` project or global level or `pyproject.toml`); support tweaking line length limits
 - Jira (or other issue tracker) ID checking (e.g. title starts with `ABC-123: `)
+- Color theme support
 
 ## License
 
