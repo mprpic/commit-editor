@@ -1,4 +1,4 @@
-name: main.yml
+name: CI
 on: [ push, pull_request ]
 
 jobs:
