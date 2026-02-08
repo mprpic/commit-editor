@@ -60,10 +60,15 @@ commit-editor path/to/file.txt
 This editor enforces the widely-accepted git commit message conventions:
 
 1. **Title (line 1)**: Should be 50 characters or less; characters beyond 50 are highlighted in red as a warning.
-
 2. **Blank line (line 2)**: Separates the title from the body.
-
 3. **Body (line 3+)**: Should wrap at 72 characters; long lines are wrapped automatically as you type.
+
+## Future Improvements
+
+- Support adding a "Co-authored-by" trailer for AI attribution
+- Word-level spellchecking
+- Config file support (`.commit.toml` project or global level or `pyproject.toml`); support tweaking line length limits
+- Jira (or other issue tracker) ID checking (e.g. title starts with `ABC-123: `)
 
 ## License
 
