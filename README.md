@@ -1,7 +1,7 @@
 # Commit Editor
 
-[![PyPI](https://img.shields.io/pypi/v/commit-editor.svg)](https://pypi.python.org/pypi/commit-editor)
-[![Python](https://img.shields.io/pypi/pyversions/commit-editor.svg)](https://pypi.python.org/pypi/commit-editor)
+[![PyPI](https://img.shields.io/pypi/v/commit-editor.svg)](https://pypi.org/project/commit-editor/)
+[![Python](https://img.shields.io/pypi/pyversions/commit-editor.svg)](https://pypi.org/project/commit-editor/)
 [![License](https://img.shields.io/pypi/l/commit-editor.svg)](https://github.com/mprpic/commit-editor/blob/main/LICENSE)
 [![CI](https://github.com/mprpic/commit-editor/workflows/CI/badge.svg)](https://github.com/mprpic/commit-editor/actions)
 
