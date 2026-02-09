@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "commit-editor"
-version = "0.1.0"
+version = "0.2.0"
 description = "A terminal-based git commit message editor with opinionated formatting"
 readme = "README.md"
 license = "MIT"
