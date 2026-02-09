@@ -88,10 +88,10 @@ class TestQuitBehavior:
             assert app._prompt_mode == "quit_confirm"
             message_bar = app.query_one("#message", MessageBar)
             message_content = message_bar.message
-            assert "Quit anyway?" in message_content
+            assert "Save changes?" in message_content
 
-    async def test_confirm_quit_with_y(self, temp_file):
-        """Pressing 'y' in confirmation prompt should quit."""
+    async def test_confirm_quit_with_y_saves_and_exits(self, temp_file):
+        """Pressing 'y' in confirmation prompt should save and quit."""
         temp_file.write_text("Original")
         app = CommitEditorApp(temp_file)
 
@@ -104,9 +104,11 @@ class TestQuitBehavior:
             await pilot.press("y")
 
             assert app._exit is True
+            # File should have been saved with the modified content
+            assert temp_file.read_text() == "Modified\n"
 
-    async def test_cancel_quit_with_n(self, temp_file):
-        """Pressing 'n' in confirmation prompt should cancel quit."""
+    async def test_discard_quit_with_n(self, temp_file):
+        """Pressing 'n' in confirmation prompt should quit without saving."""
         temp_file.write_text("Original")
         app = CommitEditorApp(temp_file)
 
@@ -118,13 +120,9 @@ class TestQuitBehavior:
             await pilot.press("ctrl+q")
             await pilot.press("n")
 
-            # Should not have exited, prompt mode should be cleared
-            assert app._exit is False
-            assert app._prompt_mode is None
-            message_bar = app.query_one("#message", MessageBar)
-            # Message bar should be cleared (empty)
-            message_content = message_bar.message
-            assert message_content == ""
+            # Should have exited without saving
+            assert app._exit is True
+            assert temp_file.read_text() == "Original"
 
     async def test_cancel_quit_with_escape(self, temp_file):
         """Pressing 'escape' in confirmation prompt should cancel quit."""

@@ -304,13 +304,21 @@ class CommitEditorApp(App):
         """Disable editor actions when in prompt mode."""
         if self._prompt_mode is not None:
             # Allow only prompt-related actions
-            if action in ("confirm_quit", "cancel_quit"):
+            if action in ("confirm_quit", "discard_quit", "cancel_quit"):
                 return True
             return False
         return True
 
     def action_confirm_quit(self) -> None:
-        """Confirm quit when prompted."""
+        """Save and quit when prompted."""
+        if self._prompt_mode == "quit_confirm":
+            self._prompt_mode = None
+            self.query_one("#message", MessageBar).clear()
+            self.action_save()
+            self.exit()
+
+    def action_discard_quit(self) -> None:
+        """Quit without saving when prompted."""
         if self._prompt_mode == "quit_confirm":
             self._prompt_mode = None
             self.query_one("#message", MessageBar).clear()
@@ -332,7 +340,11 @@ class CommitEditorApp(App):
                 event.prevent_default()
                 event.stop()
                 self.action_confirm_quit()
-            elif event.key in ("n", "escape"):
+            elif event.key == "n":
+                event.prevent_default()
+                event.stop()
+                self.action_discard_quit()
+            elif event.key == "escape":
                 event.prevent_default()
                 event.stop()
                 self.action_cancel_quit()
@@ -398,7 +410,7 @@ class CommitEditorApp(App):
             editor = self.query_one("#editor", CommitTextArea)
             editor.read_only = True
             message_bar = self.query_one("#message", MessageBar)
-            message_bar.show_prompt("Unsaved changes. Quit anyway? (y,n,esc)")
+            message_bar.show_prompt("Save changes? (y/n/esc)")
         else:
             self.exit()
 
