@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from pathlib import Path
 
 from rich.segment import Segment
@@ -10,9 +11,11 @@ from textual.strip import Strip
 from textual.widgets import Static, TextArea
 
 from commit_editor.git import get_signed_off_by
+from commit_editor.spelling import WORD_PATTERN, SpellCheckCache
 
 TITLE_MAX_LENGTH = 50
 BODY_MAX_LENGTH = 72
+_SUGGESTION_PREFIX = "Suggestions for"
 
 
 def wrap_line(line: str, width: int = 72) -> list[str]:
@@ -73,61 +76,103 @@ class CommitTextArea(TextArea):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._last_body_text = ""
+        self._spell_cache = SpellCheckCache()
+        self.spellcheck_enabled = True
 
     def render_line(self, y: int) -> Strip:
-        """Render a line with custom highlighting for title overflow."""
+        """Render a line with custom highlighting for title overflow and misspelled words."""
         strip = super().render_line(y)
+        lines = self.text.split("\n")
 
-        # Only highlight overflow on the first line (title)
-        if y == 0:
-            lines = self.text.split("\n")
-            if lines:
-                title = lines[0]
-                if len(title) > TITLE_MAX_LENGTH:
-                    strip = self._highlight_title_overflow(strip, title)
+        # Highlight overflow on the first line (title)
+        if y == 0 and lines:
+            title = lines[0]
+            if len(title) > TITLE_MAX_LENGTH:
+                strip = self._apply_char_styles(
+                    strip, title, Style(color="red", bold=True), lambda pos: pos >= TITLE_MAX_LENGTH
+                )
+
+        # Underline misspelled words
+        if self.spellcheck_enabled and y < len(lines):
+            line_text = lines[y]
+            spans = self._spell_cache.get_misspelled_spans(y, line_text)
+            if spans:
+                styled_positions = set()
+                for start, end in spans:
+                    for i in range(start, end):
+                        styled_positions.add(i)
+                strip = self._apply_char_styles(
+                    strip, line_text, Style(underline=True), lambda pos: pos in styled_positions
+                )
 
         return strip
 
     @staticmethod
-    def _highlight_title_overflow(strip: Strip, title: str) -> Strip:
-        """Apply warning highlighting to title characters beyond 50."""
-        warning_style = Style(color="red", bold=True)
-
+    def _apply_char_styles(
+        strip: Strip,
+        line_text: str,
+        extra_style: Style,
+        should_style: Callable[[int], bool],
+    ) -> Strip:
+        """Apply extra_style to characters where should_style(char_position) is True."""
         segments = list(strip)
         new_segments = []
-
         char_count = 0
-        title_started = False
+        content_started = False
 
         for segment in segments:
             text = segment.text
             style = segment.style
 
-            if not title_started:
-                if text and title and text.strip() and title.startswith(text.strip()[:5]):
-                    title_started = True
+            if not content_started:
+                if text and line_text and text.strip() and line_text.startswith(text.strip()[:5]):
+                    content_started = True
 
-            if title_started and text:
-                new_text_normal = ""
-                new_text_warning = ""
+            if content_started and text:
+                normal = ""
+                styled = ""
 
                 for char in text:
-                    if char_count < TITLE_MAX_LENGTH:
-                        new_text_normal += char
+                    if should_style(char_count):
+                        if normal:
+                            new_segments.append(Segment(normal, style))
+                            normal = ""
+                        styled += char
                     else:
-                        new_text_warning += char
+                        if styled:
+                            combined = style + extra_style if style else extra_style
+                            new_segments.append(Segment(styled, combined))
+                            styled = ""
+                        normal += char
                     char_count += 1
 
-                if new_text_normal:
-                    new_segments.append(Segment(new_text_normal, style))
-                if new_text_warning:
-                    # Combine existing style with warning style
-                    combined_style = style + warning_style if style else warning_style
-                    new_segments.append(Segment(new_text_warning, combined_style))
+                if normal:
+                    new_segments.append(Segment(normal, style))
+                if styled:
+                    combined = style + extra_style if style else extra_style
+                    new_segments.append(Segment(styled, combined))
             else:
                 new_segments.append(segment)
 
         return Strip(new_segments, strip.cell_length)
+
+    def get_word_at_cursor(self) -> str | None:
+        """Get the word at the current cursor position, or None."""
+        if not self.spellcheck_enabled:
+            return None
+
+        row, col = self.cursor_location
+        lines = self.text.split("\n")
+        if row >= len(lines):
+            return None
+
+        line = lines[row]
+        for match in WORD_PATTERN.finditer(line):
+            if match.start() <= col <= match.end():
+                word = match.group().strip("'")
+                return word if word else None
+
+        return None
 
     def wrap_current_body_line(self) -> None:
         """Wrap the current line if it's a body line (line 3+) and exceeds 72 chars."""
@@ -165,7 +210,20 @@ class CommitTextArea(TextArea):
             new_col = cursor_col
 
         self.load_text(new_text)
+        self.invalidate_spell_cache()
         self.cursor_location = (new_row, new_col)
+
+    def invalidate_spell_cache(self) -> None:
+        """Clear the spellcheck line cache."""
+        self._spell_cache.invalidate_all()
+
+    def get_misspelled_spans(self, row: int, line_text: str) -> list[tuple[int, int]]:
+        """Return misspelled word spans for a line."""
+        return self._spell_cache.get_misspelled_spans(row, line_text)
+
+    def get_spell_suggestions(self, word: str) -> list[str]:
+        """Return spelling suggestions for a word."""
+        return self._spell_cache.get_suggestions(word)
 
     def get_title_length(self) -> int:
         """Get the length of the title (first line)."""
@@ -204,7 +262,7 @@ class StatusBar(Static):
             title_display = f"Title: {title_length}"
 
         left = f"Ln {line}, Col {col} | {title_display}{dirty_marker}"
-        hints = "^S Save  ^Q Quit  ^O Sign-off"
+        hints = "^S Save  ^Q Quit  ^O Sign-off  ^L Spellcheck"
         left_width = len(Text.from_markup(left).plain)
         # Account for padding on both sides
         gap = (self.size.width - 2) - left_width - len(hints)
@@ -265,6 +323,7 @@ class CommitEditorApp(App):
         Binding("ctrl+s", "save", "Save", show=True),
         Binding("ctrl+q", "quit_app", "Quit", show=True),
         Binding("ctrl+o", "toggle_signoff", "Sign-off", show=True),
+        Binding("ctrl+l", "toggle_spellcheck", "Spellcheck", show=True),
     ]
 
     DEFAULT_CSS = """
@@ -283,6 +342,7 @@ class CommitEditorApp(App):
         self.dirty = False
         self._original_content = ""
         self._prompt_mode: str | None = None  # Track active prompt type
+        self._spell_timer = None
 
     def compose(self) -> ComposeResult:
         yield CommitTextArea(id="editor", show_line_numbers=True, highlight_cursor_line=True)
@@ -296,6 +356,7 @@ class CommitEditorApp(App):
         content = self.filename.read_text()
         self._original_content = content
         editor.load_text(content)
+        editor.invalidate_spell_cache()
         editor.focus()
 
         self._update_status_bar()
@@ -368,6 +429,7 @@ class CommitEditorApp(App):
     def on_selection_changed(self, event: CommitTextArea.SelectionChanged) -> None:
         """Update status bar on cursor movement."""
         self._update_status_bar()
+        self._schedule_spell_suggestions()
 
     def _update_status_bar(self) -> None:
         """Update the status bar with current state."""
@@ -475,6 +537,7 @@ class CommitEditorApp(App):
         cursor_pos = editor.cursor_location
 
         editor.load_text(new_text)
+        editor.invalidate_spell_cache()
 
         # Restore cursor position if possible
         new_lines = new_text.split("\n")
@@ -485,3 +548,56 @@ class CommitEditorApp(App):
         editor.cursor_location = (new_row, new_col)
 
         self._update_status_bar()
+
+    def action_toggle_spellcheck(self) -> None:
+        """Toggle spellcheck on/off."""
+        editor = self.query_one("#editor", CommitTextArea)
+        editor.spellcheck_enabled = not editor.spellcheck_enabled
+        message_bar = self.query_one("#message", MessageBar)
+
+        if editor.spellcheck_enabled:
+            message_bar.show_message("Spellcheck enabled")
+        else:
+            message_bar.show_message("Spellcheck disabled")
+
+        # Force re-render to update underlines
+        editor.refresh()
+
+    def _schedule_spell_suggestions(self) -> None:
+        """Debounce spell suggestion updates to avoid blocking during rapid cursor movement."""
+        if self._spell_timer is not None:
+            self._spell_timer.stop()
+        self._spell_timer = self.set_timer(0.15, self._update_spell_suggestions)
+
+    def _update_spell_suggestions(self) -> None:
+        """Show spelling suggestions in MessageBar when cursor is on a misspelled word."""
+        if self._prompt_mode is not None:
+            return
+
+        editor = self.query_one("#editor", CommitTextArea)
+        message_bar = self.query_one("#message", MessageBar)
+
+        if not editor.spellcheck_enabled:
+            if message_bar.message.startswith(_SUGGESTION_PREFIX):
+                message_bar.clear()
+            return
+
+        word = editor.get_word_at_cursor()
+        if word:
+            row, col = editor.cursor_location
+            lines = editor.text.split("\n")
+            if row < len(lines):
+                spans = editor.get_misspelled_spans(row, lines[row])
+                on_misspelled = any(start <= col < end for start, end in spans)
+                if on_misspelled:
+                    suggestions = editor.get_spell_suggestions(word)
+                    if suggestions:
+                        suggestion_text = ", ".join(suggestions)
+                        message_bar.show_message(
+                            f"{_SUGGESTION_PREFIX} '{word}': {suggestion_text}"
+                        )
+                        return
+
+        # Clear only if currently showing a spell suggestion
+        if message_bar.message.startswith(_SUGGESTION_PREFIX):
+            message_bar.clear()

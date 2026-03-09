@@ -257,3 +257,103 @@ class TestTitleWarning:
         async with app.run_test():
             editor = app.query_one("#editor", CommitTextArea)
             assert editor.get_title_length() == 60
+
+
+def _wait_for_spellcheck(editor: CommitTextArea, timeout: float = 5.0) -> None:
+    """Wait for the spellcheck dictionary to finish loading."""
+    editor._spell_cache._load_thread.join(timeout=timeout)
+
+
+class TestSpellcheck:
+    """Tests for spellcheck integration."""
+
+    async def test_misspelled_word_shows_suggestions(self, temp_file):
+        """When cursor is on a misspelled word, suggestions appear in MessageBar."""
+        temp_file.write_text("helo world")
+        app = CommitEditorApp(temp_file)
+
+        async with app.run_test() as pilot:
+            editor = app.query_one("#editor", CommitTextArea)
+            _wait_for_spellcheck(editor)
+
+            # Move cursor onto the misspelled word "helo"
+            editor.cursor_location = (0, 2)
+            await pilot.pause()
+            app._update_spell_suggestions()
+
+            message_bar = app.query_one("#message", MessageBar)
+            assert "Suggestions for 'helo'" in message_bar.message
+
+    async def test_correct_word_no_suggestions(self, temp_file):
+        """When cursor is on a correct word, no suggestions appear."""
+        temp_file.write_text("hello world")
+        app = CommitEditorApp(temp_file)
+
+        async with app.run_test() as pilot:
+            editor = app.query_one("#editor", CommitTextArea)
+            _wait_for_spellcheck(editor)
+
+            editor.cursor_location = (0, 2)
+            await pilot.pause()
+            app._update_spell_suggestions()
+
+            message_bar = app.query_one("#message", MessageBar)
+            assert not message_bar.message.startswith("Suggestions for")
+
+    async def test_comment_line_no_suggestions(self, temp_file):
+        """Words on comment lines don't trigger suggestions."""
+        temp_file.write_text("title\n\n# helo wrld")
+        app = CommitEditorApp(temp_file)
+
+        async with app.run_test() as pilot:
+            editor = app.query_one("#editor", CommitTextArea)
+            _wait_for_spellcheck(editor)
+
+            editor.cursor_location = (2, 3)
+            await pilot.pause()
+            app._update_spell_suggestions()
+
+            message_bar = app.query_one("#message", MessageBar)
+            assert not message_bar.message.startswith("Suggestions for")
+
+    async def test_moving_off_misspelled_clears_suggestion(self, temp_file):
+        """Moving cursor off a misspelled word clears the suggestion."""
+        temp_file.write_text("helo world")
+        app = CommitEditorApp(temp_file)
+
+        async with app.run_test() as pilot:
+            editor = app.query_one("#editor", CommitTextArea)
+            _wait_for_spellcheck(editor)
+
+            # First, place cursor on misspelled word
+            editor.cursor_location = (0, 2)
+            await pilot.pause()
+            app._update_spell_suggestions()
+
+            message_bar = app.query_one("#message", MessageBar)
+            assert "Suggestions for 'helo'" in message_bar.message
+
+            # Move cursor to correct word
+            editor.cursor_location = (0, 6)
+            await pilot.pause()
+            app._update_spell_suggestions()
+
+            assert not message_bar.message.startswith("Suggestions for")
+
+    async def test_toggle_spellcheck_off_and_on(self, temp_file):
+        """Ctrl+L toggles spellcheck and shows status message."""
+        temp_file.write_text("helo world")
+        app = CommitEditorApp(temp_file)
+
+        async with app.run_test() as pilot:
+            editor = app.query_one("#editor", CommitTextArea)
+            assert editor.spellcheck_enabled is True
+
+            await pilot.press("ctrl+l")
+            message_bar = app.query_one("#message", MessageBar)
+            assert editor.spellcheck_enabled is False
+            assert "Spellcheck disabled" in message_bar.message
+
+            await pilot.press("ctrl+l")
+            assert editor.spellcheck_enabled is True
+            assert "Spellcheck enabled" in message_bar.message
