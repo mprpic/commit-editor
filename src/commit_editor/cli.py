@@ -1,5 +1,6 @@
 import argparse
 import sys
+from importlib.metadata import version
 from pathlib import Path
 
 
@@ -8,6 +9,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         prog="commit-editor",
         description="A terminal-based git commit message editor with opinionated formatting",
+    )
+    parser.add_argument(
+        "-V",
+        "--version",
+        action="version",
+        version=f"%(prog)s {version('commit-editor')}",
     )
     parser.add_argument(
         "filename",
