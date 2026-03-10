@@ -1,6 +1,15 @@
 from unittest.mock import patch
 
-from commit_editor.app import CommitEditorApp, CommitTextArea, MessageBar
+from textual.widgets import Input, OptionList
+
+from commit_editor.app import (
+    AI_COAUTHOR_MODELS,
+    CoauthorSelectScreen,
+    CommitEditorApp,
+    CommitTextArea,
+    MessageBar,
+    _format_coauthor,
+)
 
 
 class TestAppStartup:
@@ -357,3 +366,249 @@ class TestSpellcheck:
             await pilot.press("ctrl+l")
             assert editor.spellcheck_enabled is True
             assert "Spellcheck enabled" in message_bar.message
+
+
+class TestCoauthorToggle:
+    """Tests for the Co-authored-by toggle functionality."""
+
+    async def test_add_coauthor(self, temp_file):
+        """Ctrl+B and Enter should add the first model (default highlight)."""
+        temp_file.write_text("Commit message\n\nBody text")
+        app = CommitEditorApp(temp_file)
+
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+b")
+            # Modal should be showing with first model highlighted by default
+            screen = app.screen
+            assert isinstance(screen, CoauthorSelectScreen)
+            option_list = screen.query_one("#coauthor-list", OptionList)
+            assert option_list.highlighted == 0
+            option_list.action_select()
+            await pilot.pause()
+
+            editor = app.query_one("#editor", CommitTextArea)
+            name, email = AI_COAUTHOR_MODELS[0]
+            assert _format_coauthor(name, email) in editor.text
+
+    async def test_remove_existing_coauthor(self, temp_file):
+        """Ctrl+B when co-author exists should remove it without opening dialog."""
+        name, email = AI_COAUTHOR_MODELS[0]
+        coauthor = _format_coauthor(name, email)
+        content = f"Commit message\n\nBody text\n\n{coauthor}"
+        temp_file.write_text(content)
+        app = CommitEditorApp(temp_file)
+
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+b")
+            await pilot.pause()
+
+            # Should not have opened the dialog
+            assert not isinstance(app.screen, CoauthorSelectScreen)
+            editor = app.query_one("#editor", CommitTextArea)
+            assert "Co-authored-by:" not in editor.text
+
+    async def test_coauthor_added_before_signoff(self, temp_file):
+        """Co-authored-by should be inserted before Signed-off-by."""
+        content = "Commit message\n\nBody text\n\nSigned-off-by: Test User <test@example.com>"
+        temp_file.write_text(content)
+        app = CommitEditorApp(temp_file)
+
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+b")
+            screen = app.screen
+            assert isinstance(screen, CoauthorSelectScreen)
+            option_list = screen.query_one("#coauthor-list", OptionList)
+            option_list.highlighted = 0
+            option_list.action_select()
+            await pilot.pause()
+
+            editor = app.query_one("#editor", CommitTextArea)
+            text = editor.text
+            coauthor_pos = text.find("Co-authored-by:")
+            signoff_pos = text.find("Signed-off-by:")
+            assert coauthor_pos != -1
+            assert signoff_pos != -1
+            assert coauthor_pos < signoff_pos
+
+    async def test_coauthor_before_git_comments(self, temp_file):
+        """Co-authored-by should go before # comment lines."""
+        content = (
+            "Commit message\n\n"
+            "# Please enter the commit message for your changes.\n"
+            "# Lines starting with '#' will be ignored.\n"
+        )
+        temp_file.write_text(content)
+        app = CommitEditorApp(temp_file)
+
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+b")
+            screen = app.screen
+            assert isinstance(screen, CoauthorSelectScreen)
+            option_list = screen.query_one("#coauthor-list", OptionList)
+            option_list.highlighted = 0
+            option_list.action_select()
+            await pilot.pause()
+
+            editor = app.query_one("#editor", CommitTextArea)
+            text = editor.text
+            coauthor_pos = text.find("Co-authored-by:")
+            comment_pos = text.find("# Please enter")
+            assert coauthor_pos != -1
+            assert coauthor_pos < comment_pos
+
+    async def test_escape_cancels(self, temp_file):
+        """Pressing Escape in the modal should cancel without changes."""
+        content = "Commit message\n\nBody text"
+        temp_file.write_text(content)
+        app = CommitEditorApp(temp_file)
+
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+b")
+            screen = app.screen
+            assert isinstance(screen, CoauthorSelectScreen)
+            await pilot.press("escape")
+            await pilot.pause()
+
+            editor = app.query_one("#editor", CommitTextArea)
+            assert editor.text == content
+            assert "Co-authored-by:" not in editor.text
+
+    async def test_toggle_removes_then_allows_new_selection(self, temp_file):
+        """Ctrl+B removes existing co-author, then Ctrl+B again opens dialog."""
+        temp_file.write_text("Commit message\n\nBody text")
+        app = CommitEditorApp(temp_file)
+
+        async with app.run_test() as pilot:
+            # Add first model
+            await pilot.press("ctrl+b")
+            screen = app.screen
+            assert isinstance(screen, CoauthorSelectScreen)
+            option_list = screen.query_one("#coauthor-list", OptionList)
+            option_list.highlighted = 0
+            option_list.action_select()
+            await pilot.pause()
+
+            editor = app.query_one("#editor", CommitTextArea)
+            name0, email0 = AI_COAUTHOR_MODELS[0]
+            assert _format_coauthor(name0, email0) in editor.text
+
+            # Ctrl+B again removes it (no dialog)
+            await pilot.press("ctrl+b")
+            await pilot.pause()
+            assert "Co-authored-by:" not in editor.text
+
+            # Ctrl+B again opens dialog for new selection
+            await pilot.press("ctrl+b")
+            screen = app.screen
+            assert isinstance(screen, CoauthorSelectScreen)
+            option_list = screen.query_one("#coauthor-list", OptionList)
+            option_list.highlighted = 5
+            option_list.action_select()
+            await pilot.pause()
+
+            name5, email5 = AI_COAUTHOR_MODELS[5]
+            assert _format_coauthor(name5, email5) in editor.text
+            assert _format_coauthor(name0, email0) not in editor.text
+
+    async def test_custom_coauthor(self, temp_file):
+        """Selecting 'Other...' and typing custom value should add it."""
+        temp_file.write_text("Commit message\n\nBody text")
+        app = CommitEditorApp(temp_file)
+
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+b")
+            screen = app.screen
+            assert isinstance(screen, CoauthorSelectScreen)
+            option_list = screen.query_one("#coauthor-list", OptionList)
+            # Select "Other..." (last option after separator)
+            option_list.highlighted = len(AI_COAUTHOR_MODELS) + 1
+            option_list.action_select()
+            await pilot.pause()
+
+            # Input should now be visible
+            input_widget = screen.query_one("#coauthor-input", Input)
+            input_widget.value = "Custom Bot <bot@example.com>"
+            await input_widget.action_submit()
+            await pilot.pause()
+
+            editor = app.query_one("#editor", CommitTextArea)
+            assert "Co-authored-by: Custom Bot <bot@example.com>" in editor.text
+
+    async def test_no_blank_line_between_coauthor_and_signoff(self, temp_file):
+        """There should be no blank line between Co-authored-by and Signed-off-by."""
+        content = "Commit message\n\nBody text\n\nSigned-off-by: Test User <test@example.com>"
+        temp_file.write_text(content)
+        app = CommitEditorApp(temp_file)
+
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+b")
+            screen = app.screen
+            assert isinstance(screen, CoauthorSelectScreen)
+            option_list = screen.query_one("#coauthor-list", OptionList)
+            option_list.highlighted = 0
+            option_list.action_select()
+            await pilot.pause()
+
+            editor = app.query_one("#editor", CommitTextArea)
+            name, email = AI_COAUTHOR_MODELS[0]
+            coauthor = _format_coauthor(name, email)
+            lines = editor.text.split("\n")
+            coauthor_idx = lines.index(coauthor)
+            signoff_idx = next(
+                i for i, line in enumerate(lines) if line.startswith("Signed-off-by:")
+            )
+            # Trailers should be on adjacent lines
+            assert signoff_idx == coauthor_idx + 1
+
+    async def test_coauthor_not_on_first_line_when_empty(self, temp_file):
+        """Co-authored-by should not appear on the first line of an empty message."""
+        content = "\n# Please enter the commit message for your changes.\n"
+        temp_file.write_text(content)
+        app = CommitEditorApp(temp_file)
+
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+b")
+            screen = app.screen
+            assert isinstance(screen, CoauthorSelectScreen)
+            option_list = screen.query_one("#coauthor-list", OptionList)
+            option_list.highlighted = 0
+            option_list.action_select()
+            await pilot.pause()
+
+            editor = app.query_one("#editor", CommitTextArea)
+            lines = editor.text.split("\n")
+            # First line should be empty (title), trailer should not be on line 1
+            assert lines[0] == ""
+            assert not lines[0].startswith("Co-authored-by:")
+
+    async def test_signoff_after_coauthor_no_blank_line(self, temp_file):
+        """Adding Signed-off-by after Co-authored-by should not insert a blank line."""
+        temp_file.write_text("Commit message\n\nBody text")
+        app = CommitEditorApp(temp_file)
+
+        with patch("commit_editor.app.get_signed_off_by") as mock_signoff:
+            mock_signoff.return_value = "Signed-off-by: Test User <test@example.com>"
+
+            async with app.run_test() as pilot:
+                # Add co-author first
+                await pilot.press("ctrl+b")
+                screen = app.screen
+                assert isinstance(screen, CoauthorSelectScreen)
+                option_list = screen.query_one("#coauthor-list", OptionList)
+                option_list.highlighted = 0
+                option_list.action_select()
+                await pilot.pause()
+
+                # Add signoff
+                await pilot.press("ctrl+o")
+
+                editor = app.query_one("#editor", CommitTextArea)
+                name, email = AI_COAUTHOR_MODELS[0]
+                coauthor = _format_coauthor(name, email)
+                lines = editor.text.split("\n")
+                coauthor_idx = lines.index(coauthor)
+                signoff_idx = next(
+                    i for i, line in enumerate(lines) if line.startswith("Signed-off-by:")
+                )
+                # Trailers should be on adjacent lines
+                assert signoff_idx == coauthor_idx + 1

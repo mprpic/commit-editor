@@ -7,8 +7,11 @@ from rich.text import Text
 from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.containers import Vertical
+from textual.screen import ModalScreen
 from textual.strip import Strip
-from textual.widgets import Static, TextArea
+from textual.widgets import Input, OptionList, Static, TextArea
+from textual.widgets._option_list import Option
 
 from commit_editor.git import get_signed_off_by
 from commit_editor.spelling import WORD_PATTERN, SpellCheckCache
@@ -16,6 +19,92 @@ from commit_editor.spelling import WORD_PATTERN, SpellCheckCache
 TITLE_MAX_LENGTH = 50
 BODY_MAX_LENGTH = 72
 _SUGGESTION_PREFIX = "Suggestions for"
+
+AI_COAUTHOR_MODELS = [
+    ("Claude Opus 4.6", "noreply@anthropic.com"),
+    ("Claude Opus 4.6 (1M context)", "noreply@anthropic.com"),
+    ("Claude Haiku 4.5", "noreply@anthropic.com"),
+    ("Claude Sonnet 4.6 (1M context)", "noreply@anthropic.com"),
+    ("Claude Sonnet 4.6", "noreply@anthropic.com"),
+    ("Gemini 3.1 Pro", "gemini-code-assist@google.com"),
+    ("Gemini 3 Flash", "gemini-code-assist@google.com"),
+    ("Gemini 2.5 Flash", "gemini-code-assist@google.com"),
+    ("Gemini 2.5 Pro", "gemini-code-assist@google.com"),
+]
+
+
+def _format_coauthor(name: str, email: str) -> str:
+    return f"Co-authored-by: {name} <{email}>"
+
+
+class CoauthorSelectScreen(ModalScreen[str | None]):
+    """Modal screen for selecting an AI co-author model."""
+
+    DEFAULT_CSS = """
+    CoauthorSelectScreen {
+        align: center middle;
+    }
+
+    CoauthorSelectScreen > #coauthor-container {
+        width: 50;
+        height: auto;
+        max-height: 80%;
+        border: solid $primary;
+        background: $surface;
+        padding: 1;
+    }
+
+    CoauthorSelectScreen > #coauthor-container > #coauthor-list {
+        height: auto;
+        max-height: 20;
+    }
+
+    CoauthorSelectScreen > #coauthor-container > #coauthor-input {
+        display: none;
+        margin-top: 1;
+    }
+
+    CoauthorSelectScreen > #coauthor-container > #coauthor-input.visible {
+        display: block;
+    }
+    """
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel", show=False),
+    ]
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="coauthor-container"):
+            option_list = OptionList(id="coauthor-list")
+            for i, (name, email) in enumerate(AI_COAUTHOR_MODELS):
+                option_list.add_option(Option(f"  {name}", id=str(i)))
+            option_list.add_option(None)  # separator
+            option_list.add_option(Option("  Other...", id="other"))
+            option_list.highlighted = 0
+            yield option_list
+            yield Input(id="coauthor-input", placeholder="Name <email>")
+
+    @on(OptionList.OptionSelected, "#coauthor-list")
+    def on_option_selected(self, event: OptionList.OptionSelected) -> None:
+        option_id = event.option.id
+        if option_id is None:
+            return
+        if option_id == "other":
+            input_widget = self.query_one("#coauthor-input", Input)
+            input_widget.add_class("visible")
+            input_widget.focus()
+        else:
+            name, email = AI_COAUTHOR_MODELS[int(option_id)]
+            self.dismiss(_format_coauthor(name, email))
+
+    @on(Input.Submitted, "#coauthor-input")
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        value = event.value.strip()
+        if value:
+            self.dismiss(f"Co-authored-by: {value}")
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
 
 
 def wrap_line(line: str, width: int = 72) -> list[str]:
@@ -262,7 +351,7 @@ class StatusBar(Static):
             title_display = f"Title: {title_length}"
 
         left = f"Ln {line}, Col {col} | {title_display}{dirty_marker}"
-        hints = "^S Save  ^Q Quit  ^O Sign-off  ^L Spellcheck"
+        hints = "^S Save  ^Q Quit  ^O Sign-off  ^B Co-author  ^L Spellcheck"
         left_width = len(Text.from_markup(left).plain)
         # Account for padding on both sides
         gap = (self.size.width - 2) - left_width - len(hints)
@@ -324,6 +413,7 @@ class CommitEditorApp(App):
         Binding("ctrl+q", "quit_app", "Quit", show=True),
         Binding("ctrl+o", "toggle_signoff", "Sign-off", show=True),
         Binding("ctrl+l", "toggle_spellcheck", "Spellcheck", show=True),
+        Binding("ctrl+b", "toggle_coauthor", "Co-author", show=True),
     ]
 
     DEFAULT_CSS = """
@@ -446,6 +536,45 @@ class CommitEditorApp(App):
         message_bar = self.query_one("#message", MessageBar)
         message_bar.show_message(message, error=error)
 
+    @staticmethod
+    def _split_content_and_comments(
+        lines: list[str],
+    ) -> tuple[list[str], list[str]]:
+        """Split lines into content and git comment lines, stripping trailing blanks."""
+        comment_start = len(lines)
+        for i, line in enumerate(lines):
+            if line.startswith("#"):
+                comment_start = i
+                break
+        content = lines[:comment_start]
+        comments = lines[comment_start:]
+        while content and not content[-1].strip():
+            content.pop()
+        return content, comments
+
+    @staticmethod
+    def _reassemble(content_lines: list[str], comment_lines: list[str]) -> str:
+        """Reassemble content and comment lines into a single string."""
+        if comment_lines:
+            return "\n".join(content_lines) + "\n\n" + "\n".join(comment_lines)
+        return "\n".join(content_lines)
+
+    def _load_and_restore_cursor(self, new_text: str) -> None:
+        """Load text into editor, restore cursor position, and update status bar."""
+        editor = self.query_one("#editor", CommitTextArea)
+        cursor_pos = editor.cursor_location
+        editor.load_text(new_text)
+        editor.invalidate_spell_cache()
+
+        new_lines = new_text.split("\n")
+        max_row = len(new_lines) - 1
+        new_row = min(cursor_pos[0], max_row)
+        max_col = len(new_lines[new_row]) if new_row < len(new_lines) else 0
+        new_col = min(cursor_pos[1], max_col)
+        editor.cursor_location = (new_row, new_col)
+
+        self._update_status_bar()
+
     def action_save(self) -> None:
         """Save the file."""
         editor = self.query_one("#editor", CommitTextArea)
@@ -479,28 +608,13 @@ class CommitEditorApp(App):
     def action_toggle_signoff(self) -> None:
         """Toggle the Signed-off-by line."""
         editor = self.query_one("#editor", CommitTextArea)
-        text = editor.text
-        lines = text.split("\n")
 
         signoff = get_signed_off_by()
         if not signoff:
             self._show_message("Git user not configured", error=True)
             return
 
-        # Find where git comments start (lines starting with #)
-        comment_start_index = len(lines)
-        for i, line in enumerate(lines):
-            if line.startswith("#"):
-                comment_start_index = i
-                break
-
-        # Split into content and comments
-        content_lines = lines[:comment_start_index]
-        comment_lines = lines[comment_start_index:]
-
-        # Remove trailing empty lines from content for clean processing
-        while content_lines and not content_lines[-1].strip():
-            content_lines.pop()
+        content_lines, comment_lines = self._split_content_and_comments(editor.text.split("\n"))
 
         # Check if Signed-off-by already exists in content
         has_signoff = False
@@ -523,31 +637,14 @@ class CommitEditorApp(App):
             while content_lines and not content_lines[-1].strip():
                 content_lines.pop()
         else:
-            # Add Signed-off-by with blank line if needed
+            # Add Signed-off-by with blank line if needed (but not after
+            # other trailers like Co-authored-by)
             if content_lines and content_lines[-1].strip():
-                content_lines.append("")
+                if not content_lines[-1].startswith("Co-authored-by:"):
+                    content_lines.append("")
             content_lines.append(signoff)
 
-        # Reassemble: content + blank line (if comments exist) + comments
-        if comment_lines:
-            # Ensure blank line between content and comments
-            new_text = "\n".join(content_lines) + "\n\n" + "\n".join(comment_lines)
-        else:
-            new_text = "\n".join(content_lines)
-        cursor_pos = editor.cursor_location
-
-        editor.load_text(new_text)
-        editor.invalidate_spell_cache()
-
-        # Restore cursor position if possible
-        new_lines = new_text.split("\n")
-        max_row = len(new_lines) - 1
-        new_row = min(cursor_pos[0], max_row)
-        max_col = len(new_lines[new_row]) if new_row < len(new_lines) else 0
-        new_col = min(cursor_pos[1], max_col)
-        editor.cursor_location = (new_row, new_col)
-
-        self._update_status_bar()
+        self._load_and_restore_cursor(self._reassemble(content_lines, comment_lines))
 
     def action_toggle_spellcheck(self) -> None:
         """Toggle spellcheck on/off."""
@@ -562,6 +659,60 @@ class CommitEditorApp(App):
 
         # Force re-render to update underlines
         editor.refresh()
+
+    def action_toggle_coauthor(self) -> None:
+        """Toggle co-author: remove if present, otherwise open selection modal."""
+        editor = self.query_one("#editor", CommitTextArea)
+
+        if "Co-authored-by:" in editor.text:
+            self._remove_coauthor()
+        else:
+            self.push_screen(CoauthorSelectScreen(), self._on_coauthor_selected)
+
+    def _remove_coauthor(self) -> None:
+        """Remove any existing Co-authored-by line from the editor text."""
+        editor = self.query_one("#editor", CommitTextArea)
+        content_lines, comment_lines = self._split_content_and_comments(editor.text.split("\n"))
+
+        content_lines = [line for line in content_lines if not line.startswith("Co-authored-by:")]
+        while content_lines and not content_lines[-1].strip():
+            content_lines.pop()
+
+        self._load_and_restore_cursor(self._reassemble(content_lines, comment_lines))
+
+    def _on_coauthor_selected(self, result: str | None) -> None:
+        """Handle co-author selection result."""
+        if result is None:
+            return
+
+        editor = self.query_one("#editor", CommitTextArea)
+        content_lines, comment_lines = self._split_content_and_comments(editor.text.split("\n"))
+
+        # Find index of first Signed-off-by line
+        signoff_index = -1
+        for i, line in enumerate(content_lines):
+            if line.startswith("Signed-off-by:"):
+                signoff_index = i
+                break
+
+        if signoff_index >= 0:
+            # Insert directly before Signed-off-by (no blank line between trailers)
+            # Add blank separator before the trailer block if needed
+            if signoff_index > 0 and content_lines[signoff_index - 1].strip():
+                content_lines.insert(signoff_index, "")
+                signoff_index += 1
+            content_lines.insert(signoff_index, result)
+        else:
+            # Append to end
+            if not content_lines:
+                # No content yet; add blank title + separator so trailer
+                # doesn't land on the first line.
+                content_lines.extend(["", ""])
+            elif content_lines[-1].strip():
+                content_lines.append("")
+            content_lines.append(result)
+
+        self._load_and_restore_cursor(self._reassemble(content_lines, comment_lines))
 
     def _schedule_spell_suggestions(self) -> None:
         """Debounce spell suggestion updates to avoid blocking during rapid cursor movement."""
