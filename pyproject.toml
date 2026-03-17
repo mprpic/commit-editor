@@ -51,3 +51,7 @@ select = ["F", "E", "W", "I", "N"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+
+[tool.mdlint.rules.MD013]
+line_length = 120
+code_blocks = false

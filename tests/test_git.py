@@ -1,6 +1,6 @@
 from unittest.mock import patch
 
-from commit_editor.git import get_signed_off_by, get_user_email, get_user_name
+from commit_editor.git import get_issue_pattern, get_signed_off_by, get_user_email, get_user_name
 
 
 class TestGetUserName:
@@ -110,4 +110,51 @@ class TestGetSignedOffBy:
             mock_email.return_value = None
 
             result = get_signed_off_by()
+            assert result is None
+
+
+class TestGetIssuePattern:
+    """Tests for get_issue_pattern function."""
+
+    def test_successful_config_read(self):
+        """Should return the pattern string when git config succeeds."""
+        with patch("commit_editor.git.subprocess.run") as mock_run:
+            mock_run.return_value.stdout = "AIPCC-\\d+\n"
+            mock_run.return_value.returncode = 0
+
+            result = get_issue_pattern()
+            assert result == "AIPCC-\\d+"
+
+            mock_run.assert_called_once_with(
+                ["git", "config", "commit-editor.issue-pattern"],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+
+    def test_missing_config(self):
+        """Should return None when git config is not set."""
+        with patch("commit_editor.git.subprocess.run") as mock_run:
+            from subprocess import CalledProcessError
+
+            mock_run.side_effect = CalledProcessError(1, "git config")
+
+            result = get_issue_pattern()
+            assert result is None
+
+    def test_git_not_found(self):
+        """Should return None when git is not installed."""
+        with patch("commit_editor.git.subprocess.run") as mock_run:
+            mock_run.side_effect = FileNotFoundError()
+
+            result = get_issue_pattern()
+            assert result is None
+
+    def test_empty_config(self):
+        """Should return None when git config returns empty string."""
+        with patch("commit_editor.git.subprocess.run") as mock_run:
+            mock_run.return_value.stdout = "\n"
+            mock_run.return_value.returncode = 0
+
+            result = get_issue_pattern()
             assert result is None

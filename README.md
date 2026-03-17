@@ -14,6 +14,7 @@ with [Textual](https://textual.textualize.io/).
 - **White space**: Trailing white space is automatically stripped when a file is saved; an empty newline is inserted
   at the end of the file if not present.
 - **Signed-off-by toggle**: Quickly add or remove a `Signed-off-by` trailer with a keyboard shortcut
+- **Issue ID validation**: Optionally enforce that commit titles start with an issue ID (e.g. `PROJ-123:`)
 - **Status bar**: Shows current cursor position (line/column) and title length with warnings
 
 ## Installation
@@ -58,6 +59,26 @@ commit-editor path/to/file.txt
 Additional key bindings are noted in the Textual
 [`TextArea` documentation](https://textual.textualize.io/widgets/text_area/#bindings).
 
+## Configuration
+
+### Issue ID Validation
+
+You can require commit titles to start with an issue ID by setting a regex pattern:
+
+```bash
+# Per-repository
+git config commit-editor.issue-pattern 'PROJ-\d+'
+
+# Global
+git config --global commit-editor.issue-pattern 'PROJ-\d+'
+```
+
+The pattern is matched against the **start of the title** and must be followed by a colon (`:`). For example, with
+the pattern `PROJ-\d+`:
+
+- valid: `PROJ-123: fix login bug`
+- invalid: `fix login bug`
+
 ## Commit Message Format
 
 This editor enforces the widely-accepted git commit message conventions:
@@ -68,10 +89,6 @@ This editor enforces the widely-accepted git commit message conventions:
 
 ## Future Improvements
 
-- Support adding a "Co-authored-by" trailer for AI attribution
-- Word-level spellchecking
-- Config file support (`.commit.toml` project or global level or `pyproject.toml`); support tweaking line length limits
-- Jira (or other issue tracker) ID checking (e.g. title starts with `ABC-123: `)
 - Color theme support
 
 ## License

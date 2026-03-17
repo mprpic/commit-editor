@@ -6,7 +6,7 @@ This document describes how to work with the commit-editor project.
 
 ## Project Structure
 
-```
+```text
 src/commit_editor/
 ├── __init__.py    # Package init with version
 ├── cli.py         # CLI entry point (argparse)

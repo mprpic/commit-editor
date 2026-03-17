@@ -8,6 +8,7 @@ from commit_editor.app import (
     CommitEditorApp,
     CommitTextArea,
     MessageBar,
+    ValidationBar,
     _format_coauthor,
 )
 
@@ -612,3 +613,84 @@ class TestCoauthorToggle:
                 )
                 # Trailers should be on adjacent lines
                 assert signoff_idx == coauthor_idx + 1
+
+
+class TestIssueIdValidation:
+    """Tests for issue ID validation in commit title."""
+
+    async def test_no_pattern_configured(self, temp_file):
+        """When no pattern is configured, validation bar should be hidden."""
+        temp_file.write_text("Any title without issue ID")
+        with patch("commit_editor.app.get_issue_pattern", return_value=None):
+            app = CommitEditorApp(temp_file)
+            async with app.run_test():
+                validation_bar = app.query_one("#validation", ValidationBar)
+                assert "has-errors" not in validation_bar.classes
+
+    async def test_invalid_title_shows_error(self, temp_file):
+        """Invalid title should show error in validation bar."""
+        temp_file.write_text("Fix something")
+        with patch("commit_editor.app.get_issue_pattern", return_value=r"AIPCC-\d+"):
+            app = CommitEditorApp(temp_file)
+            async with app.run_test():
+                validation_bar = app.query_one("#validation", ValidationBar)
+                assert "has-errors" in validation_bar.classes
+
+    async def test_valid_title_no_error(self, temp_file):
+        """Valid title should not show error in validation bar."""
+        temp_file.write_text("AIPCC-123: Fix something")
+        with patch("commit_editor.app.get_issue_pattern", return_value=r"AIPCC-\d+"):
+            app = CommitEditorApp(temp_file)
+            async with app.run_test():
+                validation_bar = app.query_one("#validation", ValidationBar)
+                assert "has-errors" not in validation_bar.classes
+
+    async def test_title_becomes_valid_clears_error(self, temp_file):
+        """Error should disappear when title becomes valid."""
+        temp_file.write_text("Fix something")
+        with patch("commit_editor.app.get_issue_pattern", return_value=r"AIPCC-\d+"):
+            app = CommitEditorApp(temp_file)
+            async with app.run_test() as pilot:
+                validation_bar = app.query_one("#validation", ValidationBar)
+                assert "has-errors" in validation_bar.classes
+
+                # Edit title to be valid
+                editor = app.query_one("#editor", CommitTextArea)
+                editor.load_text("AIPCC-123: Fix something")
+                await pilot.pause()
+
+                assert "has-errors" not in validation_bar.classes
+
+    async def test_error_shown_on_mount(self, temp_file):
+        """Error should be shown immediately on mount with invalid title."""
+        temp_file.write_text("Bad title")
+        with patch("commit_editor.app.get_issue_pattern", return_value=r"AIPCC-\d+"):
+            app = CommitEditorApp(temp_file)
+            async with app.run_test():
+                validation_bar = app.query_one("#validation", ValidationBar)
+                assert "has-errors" in validation_bar.classes
+
+    async def test_error_persists_while_typing(self, temp_file):
+        """Error should persist while title remains invalid during typing."""
+        temp_file.write_text("Fix something")
+        with patch("commit_editor.app.get_issue_pattern", return_value=r"AIPCC-\d+"):
+            app = CommitEditorApp(temp_file)
+            async with app.run_test() as pilot:
+                validation_bar = app.query_one("#validation", ValidationBar)
+                assert "has-errors" in validation_bar.classes
+
+                # Type more text (title still invalid)
+                editor = app.query_one("#editor", CommitTextArea)
+                editor.load_text("Fix something else")
+                await pilot.pause()
+
+                assert "has-errors" in validation_bar.classes
+
+    async def test_invalid_regex_treated_as_unconfigured(self, temp_file):
+        """Invalid regex pattern should be treated as unconfigured (no error, no crash)."""
+        temp_file.write_text("Any title")
+        with patch("commit_editor.app.get_issue_pattern", return_value="[invalid"):
+            app = CommitEditorApp(temp_file)
+            async with app.run_test():
+                validation_bar = app.query_one("#validation", ValidationBar)
+                assert "has-errors" not in validation_bar.classes

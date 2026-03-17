@@ -31,6 +31,21 @@ def get_user_email() -> str | None:
         return None
 
 
+def get_issue_pattern() -> str | None:
+    try:
+        result = subprocess.run(
+            ["git", "config", "commit-editor.issue-pattern"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return result.stdout.strip() or None
+    except subprocess.CalledProcessError:
+        return None
+    except FileNotFoundError:
+        return None
+
+
 def get_signed_off_by() -> str | None:
     name = get_user_name()
     email = get_user_email()

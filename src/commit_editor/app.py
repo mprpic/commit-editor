@@ -1,3 +1,4 @@
+import re
 from collections.abc import Callable
 from pathlib import Path
 
@@ -13,12 +14,13 @@ from textual.strip import Strip
 from textual.widgets import Input, OptionList, Static, TextArea
 from textual.widgets._option_list import Option
 
-from commit_editor.git import get_signed_off_by
+from commit_editor.git import get_issue_pattern, get_signed_off_by
 from commit_editor.spelling import WORD_PATTERN, SpellCheckCache
 
 TITLE_MAX_LENGTH = 50
 BODY_MAX_LENGTH = 72
 _SUGGESTION_PREFIX = "Suggestions for"
+_ISSUE_ID_ERROR = "Missing/Invalid issue ID in title!"
 
 AI_COAUTHOR_MODELS = [
     ("Claude Opus 4.6", "noreply@anthropic.com"),
@@ -325,6 +327,51 @@ class CommitTextArea(TextArea):
         return row + 1, col + 1
 
 
+class ValidationBar(Static):
+    """Bar for showing validation error messages. Hidden when empty."""
+
+    DEFAULT_CSS = """
+    ValidationBar {
+        height: auto;
+        background: $surface;
+        color: $error;
+        padding: 0 1;
+        display: none;
+    }
+    ValidationBar.has-errors {
+        display: block;
+    }
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._errors: list[tuple[str, str]] = []
+
+    def set_error(self, key: str, message: str) -> None:
+        """Add or update a validation error by key."""
+        for i, (k, _) in enumerate(self._errors):
+            if k == key:
+                self._errors[i] = (key, message)
+                self._refresh_display()
+                return
+        self._errors.append((key, message))
+        self._refresh_display()
+
+    def clear_error(self, key: str) -> None:
+        """Remove a validation error by key."""
+        self._errors = [(k, m) for k, m in self._errors if k != key]
+        self._refresh_display()
+
+    def _refresh_display(self) -> None:
+        """Update the display based on current errors."""
+        if self._errors:
+            self.update("\n".join(msg for _, msg in self._errors))
+            self.add_class("has-errors")
+        else:
+            self.update("")
+            self.remove_class("has-errors")
+
+
 class StatusBar(Static):
     """Status bar showing cursor position and title length."""
 
@@ -433,9 +480,17 @@ class CommitEditorApp(App):
         self._original_content = ""
         self._prompt_mode: str | None = None  # Track active prompt type
         self._spell_timer = None
+        self._issue_pattern: re.Pattern[str] | None = None
+        pattern = get_issue_pattern()
+        if pattern:
+            try:
+                self._issue_pattern = re.compile(pattern + r":")
+            except re.error:
+                pass
 
     def compose(self) -> ComposeResult:
         yield CommitTextArea(id="editor", show_line_numbers=True, highlight_cursor_line=True)
+        yield ValidationBar(id="validation")
         yield StatusBar(id="status")
         yield MessageBar(id="message")
 
@@ -450,6 +505,7 @@ class CommitEditorApp(App):
         editor.focus()
 
         self._update_status_bar()
+        self._validate_issue_id()
 
     def check_action(self, action: str, parameters: tuple) -> bool | None:
         """Disable editor actions when in prompt mode."""
@@ -514,6 +570,7 @@ class CommitEditorApp(App):
             self.query_one("#message", MessageBar).clear()
 
         self._update_status_bar()
+        self._validate_issue_id()
 
     @on(CommitTextArea.SelectionChanged)
     def on_selection_changed(self, event: CommitTextArea.SelectionChanged) -> None:
@@ -530,6 +587,18 @@ class CommitEditorApp(App):
         title_length = editor.get_title_length()
 
         status.update_status(line, col, title_length, self.dirty)
+
+    def _validate_issue_id(self) -> None:
+        """Validate issue ID in the title and update the validation bar."""
+        if self._issue_pattern is None:
+            return
+        editor = self.query_one("#editor", CommitTextArea)
+        title = editor.text.split("\n")[0] if editor.text else ""
+        validation_bar = self.query_one("#validation", ValidationBar)
+        if self._issue_pattern.match(title):
+            validation_bar.clear_error("issue_id")
+        else:
+            validation_bar.set_error("issue_id", _ISSUE_ID_ERROR)
 
     def _show_message(self, message: str, error: bool = False) -> None:
         """Show a message in the message bar."""
