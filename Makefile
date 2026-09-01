@@ -2,7 +2,7 @@
 
 define commit-tag-push
 	git add . && git commit
-	git tag $$(uv version)
+	git tag $$(uv version --short)
 	@git show HEAD
 	@read -p "Push to remote? [y/N] " confirm && [ "$$confirm" = "y" ] && git push --follow-tags || echo "Skipped push."
 endef
