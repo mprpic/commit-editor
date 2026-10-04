@@ -23,18 +23,17 @@ _SUGGESTION_PREFIX = "Suggestions for"
 _ISSUE_ID_ERROR = "Missing/Invalid issue ID in title!"
 
 AI_COAUTHOR_MODELS = [
-    ("GPT-5.6 Sol", "noreply@openai.com"),
-    ("GPT-5.6 Terra", "noreply@openai.com"),
-    ("GPT-5.6 Luna", "noreply@openai.com"),
+    ("GPT-6 Astra", "noreply@openai.com"),
+    ("GPT-6.1 Sol", "noreply@openai.com"),
+    ("GPT-6 Luna", "noreply@openai.com"),
+    ("Claude Opus 5.5", "noreply@anthropic.com"),
     ("Claude Opus 5", "noreply@anthropic.com"),
     ("Claude Opus 4.8", "noreply@anthropic.com"),
-    ("Claude Opus 4.7", "noreply@anthropic.com"),
-    ("Claude Opus 4.6", "noreply@anthropic.com"),
+    ("Claude Sonnet 5.5", "noreply@anthropic.com"),
     ("Claude Sonnet 5", "noreply@anthropic.com"),
-    ("Claude Sonnet 4.6", "noreply@anthropic.com"),
     ("Claude Haiku 4.5", "noreply@anthropic.com"),
-    ("Claude Fable 5", "noreply@anthropic.com"),
-    ("Gemini 3.6 Flash", "gemini-code-assist@google.com"),
+    ("Claude Fable 5.1", "noreply@anthropic.com"),
+    ("Gemini 3.8 Flash", "gemini-code-assist@google.com"),
     ("Gemini 3.6 Thinking", "gemini-code-assist@google.com"),
     ("Gemini 3.1 Pro", "gemini-code-assist@google.com"),
 ]
