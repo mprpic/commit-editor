@@ -1,4 +1,4 @@
-.PHONY: bump-minor bump-major build publish publish-test
+.PHONY: bump-minor bump-major build
 
 define commit-tag-push
 	git add . && git commit
@@ -18,9 +18,3 @@ bump-major:
 build:
 	rm -rf dist/
 	uv build
-
-publish:
-	uv publish
-
-publish-test:
-	uv publish --publish-url https://test.pypi.org/legacy/
