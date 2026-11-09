@@ -50,7 +50,7 @@ tox
 
 This runs:
 
-- Tests on Python 3.11, 3.12, and 3.13
+- Tests on Python 3.11, 3.12, 3.13, 3.14, and 3.15
 - Linting with ruff
 - Format checking with ruff
 - Type checking with ty
